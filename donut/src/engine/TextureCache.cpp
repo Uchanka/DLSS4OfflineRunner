@@ -973,8 +973,8 @@ TextureCache::PairMVD TextureCache::hackLoadMVDFromFile(const std::string& fileN
     const size_t imgWidth = static_cast<size_t>(image.width);
     const size_t imgHeight = static_cast<size_t>(image.height);
     // donut has mvec in pixel space
-    const float ratioX = static_cast<float>(imgWidth) * 0.5f;
-    const float ratioY = static_cast<float>(imgHeight) * 0.5f;
+    const float ratioX = static_cast<float>(imgWidth) * 1.0f;
+    const float ratioY = static_cast<float>(imgHeight) * 1.0f;
     auto scaleMV = [](uint16_t value, float ratio) -> uint16_t
         {
             tinyexr::FP16 half; half.u = value;
