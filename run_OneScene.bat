@@ -16,19 +16,19 @@ if %errorlevel% neq 0 (
 
 rem Set default values first
 rem IMPORTANT NOTE: Batch script executes commands in Windows command prompt which can't recognize "/" as path separator.
-set Identifier=Script_Test
 set DisplayResolution=4
+rem set AlignFilename=
 set AlignFilename=-AlignFilename
-set INPUT_ROOT=..\media\TEST_SCENE
+set INPUT_ROOT=..\media\EmptySanityCheck60\Vertical
 set OUTPUT_ROOT=%INPUT_ROOT%\screenshots
 
+rem set "Has_Ref=" if you DON'T want to copy references in NPP_GT to OUTPUT_ROOT (for comparison)
 set "Has_Ref=y"
 
 rem Override with command-line arguments if provided
-if not "%~1"=="" set Identifier=%~1
-if not "%~2"=="" set DisplayResolution=%~2
-if not "%~3"=="" set INPUT_ROOT=%~3
-if not "%~4"=="" set OUTPUT_ROOT=%~4
+if not "%~1"=="" set DisplayResolution=%~1
+if not "%~2"=="" set INPUT_ROOT=%~2
+if not "%~3"=="" set OUTPUT_ROOT=%~3
 
 set INPUT_COUNT=0
 for %%x in (%INPUT_ROOT%\NPP_JI\*.exr) do (
@@ -40,15 +40,14 @@ set /a END_INDEX=BATCH_COUNT-1
 
 rem Let user press y/n to confirm the command and total runs.
 echo Using parameters:
-echo Identifier: %Identifier%
 echo DisplayResolution: %DisplayResolution%
 echo Input path: %INPUT_ROOT%
 echo Output path: %OUTPUT_ROOT%
+echo Please confirm that "BATCH_COUNT * 15 >= INPUT_COUNT"
 echo INPUT_COUNT: %INPUT_COUNT%, BATCH_COUNT: %BATCH_COUNT%
 
-set "FIXED_ARGS=-EnableHack -Identifier %Identifier% -DisplayResolution %DisplayResolution% -ParseJitter -HackPaths "%INPUT_ROOT%" -StoreOutput %AlignFilename% -OutputPath "%OUTPUT_ROOT%""
+set "FIXED_ARGS=-EnableHack -DisplayResolution %DisplayResolution% -ParseJitter -HackPaths "%INPUT_ROOT%" -StoreOutput %AlignFilename% -OutputPath "%OUTPUT_ROOT%""
 echo Command to run: %EXE_PATH% %FIXED_ARGS% -BatchIndex [0 to %END_INDEX%] 
-echo Please confirm command and that "BATCH_COUNT * 15 >= total input frames"
 
 choice /c YN /m "Run with these parameters? Double check OUTPUT_ROOT=%OUTPUT_ROOT% is what you normally pass to last arg -OutputPath."
 if %errorlevel% equ 2 (

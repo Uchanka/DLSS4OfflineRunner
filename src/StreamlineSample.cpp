@@ -64,6 +64,8 @@
 #include <winrt/Windows.Media.AppRecording.h>
 
 #include <winrt/Windows.Graphics.Capture.h>
+
+//#include <Windows.UI.Interop.h>
 #include <Windows.Graphics.Capture.Interop.h>
 #include <Windows.Graphics.Directx.Direct3d11.Interop.h>
 
@@ -259,6 +261,11 @@ bool StreamlineSample::HackOptionDef::PostProcess()
         outPath = std::filesystem::path(hackPaths[0]).parent_path() / "outputs";
     }
 
+	// Defensive: create output folder if not exist
+    if (!std::filesystem::exists(outPath)) {
+        std::filesystem::create_directories(outPath);
+	}
+
     // Set frameCount to MVD count
     frameCount = static_cast<size_t>(std::count_if(
         std::filesystem::directory_iterator(hackPaths[1]),
@@ -294,6 +301,7 @@ bool StreamlineSample::HackOptionDef::PostProcess()
             if (!token.empty() && std::all_of(token.begin(), token.end(), ::isdigit)) {
                 minID = std::min(minID, std::stoull(token));
                 allSeenPrefix.emplace(pathPrefix);
+				maxFrameIDLength = std::max(maxFrameIDLength, token.length());
                 break;
             }
             else {
@@ -406,18 +414,17 @@ bool StreamlineSample::CreateCaptureDevice()
 
 bool StreamlineSample::CreateCaptureItemForWindow()
 {
-    auto window_ptr = GetDeviceManager()->GetWindow();
-    if (window_ptr == nullptr)
-    {
-        log::error("No GLFW window set");
-        return false;
-    }
-    HWND hwnd = glfwGetWin32Window(window_ptr);
+    HWND hwnd = glfwGetWin32Window(GetDeviceManager()->GetWindow());
     if (hwnd == nullptr)
     {
         log::error("Can't get HWND from GLFW window");
         return false;
     }
+
+    //// Another hacky way to init m_captureItem, but doesn't change capture rect size.
+    //winrt::Windows::UI::WindowId windowID = { .Value = reinterpret_cast<uint64_t>(hwnd) };
+    //m_captureItem = winrt::Windows::Graphics::Capture::GraphicsCaptureItem::TryCreateFromWindowId(windowID);
+    
     // Use interop interface to create capture item
     auto interop = winrt::get_activation_factory<winrt::Windows::Graphics::Capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     winrt::check_hresult(interop->CreateForWindow(
@@ -425,6 +432,10 @@ bool StreamlineSample::CreateCaptureItemForWindow()
         winrt::guid_of<ABI::Windows::Graphics::Capture::IGraphicsCaptureItem>(),
         reinterpret_cast<void**>(winrt::put_abi(m_captureItem))
     ));
+    auto captureRectSize = m_captureItem.Size();
+    hackExportBytesPerFrameFG = static_cast<size_t>(captureRectSize.Width) *
+        static_cast<size_t>(captureRectSize.Height) *
+		4 * 2; // RGBA16_FLOAT
     return true;
 }
 
@@ -480,14 +491,14 @@ bool StreamlineSample::SaveIfUniqueTexture(winrt::com_ptr<ID3D11Device> device, 
 
     /// This will happen in windowed mode, i.e. (deviceParams.startFullscreen = false)
     /// E.g. A 2562 x 1453 window will be displayed for 2560 x 1440 display resolution.
-    if (desc.Width != hackOptions.displayResolution.x || desc.Height != hackOptions.displayResolution.y) {
-        log::warning("Captured FG frame size [%d, %d] mismatches expected display resolution [%d, %d]",
-            desc.Width, desc.Height,
-            hackOptions.displayResolution.x, hackOptions.displayResolution.y);
-        log::warning("Likely due to (1) starting in windowed mode (2) Monitor smaller than specified display resolution. Will skip FG frame capture.");
-        // To stop retrying another capture
-        return true;
-    }
+    //if (desc.Width != hackOptions.displayResolution.x || desc.Height != hackOptions.displayResolution.y) {
+    //    log::warning("Captured FG frame size [%d, %d] mismatches expected display resolution [%d, %d]",
+    //        desc.Width, desc.Height,
+    //        hackOptions.displayResolution.x, hackOptions.displayResolution.y);
+    //    log::warning("Likely due to (1) starting in windowed mode (2) Monitor smaller than specified display resolution. Will skip FG frame capture.");
+    //    // To stop retrying another capture
+    //    return true;
+    //}
 
     const int width = desc.Width;
     const int height = desc.Height;
@@ -534,10 +545,10 @@ bool StreamlineSample::SaveIfUniqueTexture(winrt::com_ptr<ID3D11Device> device, 
     bool uniqueHash = !hash_bin.contains(hash64);;
     if (uniqueHash) {
         // unique, save it
-        uint8_t* slotStart = hackExportMemoryPoolFG.get() + hackExportSlotFG * hackExportBytesPerFrame;
+        uint8_t* slotStart = hackExportMemoryPoolFG.get() + hackExportSlotFG * hackExportBytesPerFrameFG;
 
         // We already ensure the actually captured window size matches target display resolution.
-        std::memcpy(slotStart, mapped.pData, hackExportBytesPerFrame);
+        std::memcpy(slotStart, mapped.pData, hackExportBytesPerFrameFG);
 
         FrameData frameData = { slotStart, mapped.RowPitch, width, height, filename };
 
@@ -719,7 +730,7 @@ void StreamlineSample::DecideExportInfo()
                 fid += hackOptions.baseFrameIndex;
 
             // align frameID to 4 digits, e.g. "3" to "0003" for cleaner folder view.
-            std::string frameIdStr = std::string(4 /* format length */ - std::to_string(fid).length(), '0')
+            std::string frameIdStr = std::string(hackOptions.maxFrameIDLength - std::to_string(fid).length(), '0')
                 + std::to_string(fid) + "_";
 
             return std::filesystem::absolute(hackOptions.outPath).string() + "/" +
@@ -747,7 +758,7 @@ void StreamlineSample::DecideExportInfo()
                 fid += hackOptions.baseFrameIndex;
 
             // align frameID to 4 digits, e.g. "3" to "0003" for cleaner folder view.
-            std::string frameIdStr = std::string(4 /* format length */ - std::to_string(fid).length(), '0')
+            std::string frameIdStr = std::string(hackOptions.maxFrameIDLength - std::to_string(fid).length(), '0')
                 + std::to_string(fid) + "_";
 
             return std::filesystem::absolute(hackOptions.outPath).string() + "/" +
@@ -1135,21 +1146,31 @@ bool StreamlineSample::LoadHackTextures(std::shared_ptr<donut::engine::TextureCa
             colorPath.c_str(), colorFiles.size(),
             mvdPath.c_str(), mvdFiles.size());
     }
+    const size_t totalInputFrames = colorFiles.size();
 
     /// Here, we ALWAYS read 3 (for warm up) + 15 + 1 (for computing last 15th frame correctly) inputs.
-    /// e.g. if batchIndex = 0 (we want to capture frames 0 to 14), we load frames 0 to 14 
-    /// PLUS frame -3, -2, -1 (57 to 59) for warm up.
-    /// batchIndex: warmupStart
-    /// 0: -3, 1: 12, 2: 27, 3: 42
-    /// Thus we must use signed type.
-    int32_t warmupStart = static_cast<int32_t>(hackOptions.batchIndex * FramesToCapture) - 3;
-    // int + uint = uint, so cast to avoid overflow; this can go above .frameCount
-    int32_t loadEnd = warmupStart + static_cast<int32_t>(FramesToReplayTotal);
+    /// However, note that when batchIndex = 0, we MUST use three frame 0 to keep history unpolluted.
+    /// E.g. For a 60-frame scene with 4 batches, {batchIndex, warmup frame indices} should be:
+	/// 0: {0,0,0}, 1: {12,13,14}, 2: {27,28,29}, 3: {42,43,44}
+    std::vector<size_t> indicesToLoad;
+    indicesToLoad.reserve(FramesToReplayTotal);
+    size_t idxFirstCaptureFrame = 0;
+    if (hackOptions.batchIndex == 0) {
+        indicesToLoad.insert(indicesToLoad.begin(), { 0u, 0u, 0u });
+    }
+    else {
+        // Now definitely bigger than FramesToCapture = 15
+        idxFirstCaptureFrame = hackOptions.batchIndex * FramesToCapture;
+        indicesToLoad.insert(indicesToLoad.begin(), { idxFirstCaptureFrame - 3, idxFirstCaptureFrame - 2, idxFirstCaptureFrame -1 });
+    }
+	assert((indicesToLoad.size() == 3));
+    for (size_t i = 0; i < FramesToCapture; ++i) {
+        indicesToLoad.push_back((idxFirstCaptureFrame + i) % totalInputFrames);
+	}
+    indicesToLoad.push_back((idxFirstCaptureFrame + FramesToCapture) % totalInputFrames);
 
     /// For last batch, e.g. frameCount = 50, we go from 42 to 49 then wrap around
-    for (int32_t i = warmupStart; i < loadEnd; ++i) {
-        size_t frameIdx = static_cast<size_t>(i < 0 ? i + hackOptions.frameCount : i) % hackOptions.frameCount;
-
+    for (size_t frameIdx : indicesToLoad) {
         auto loadedColor = textureCache->hackLoadColorFromFile(colorFiles[frameIdx].generic_string());
         hackLoadedColorsHDR.emplace_back(loadedColor);
         auto [loadedMV, loadedDepth] = textureCache->hackLoadMVDFromFile(mvdFiles[frameIdx].generic_string());
@@ -1166,18 +1187,6 @@ bool StreamlineSample::LoadHackTextures(std::shared_ptr<donut::engine::TextureCa
                 textureCache->hackLoadJitterDataFromFilename(colorFiles[frameIdx].stem().generic_string())
             );
         }
-    }
-
-    // DEBUG tiled exr loading
-    {
-        //const std::filesystem::path tile_path("../media/TEST_SCENE/TILED_IN");
-        //// this would be 1
-        //std::vector<std::filesystem::path> tile_files = populatePathList(tile_path);
-        //const auto colorSize = hackLoadedColorsHDR.size();
-        //hackLoadedColorsHDR.clear();
-        //auto loadedTiledTexture =
-        //    textureCache->hackLoadColorFromFile(tile_files[0].generic_string());
-        //hackLoadedColorsHDR.resize(colorSize, loadedTiledTexture);
     }
 
     if (allSeenResolution.size() != 1) {

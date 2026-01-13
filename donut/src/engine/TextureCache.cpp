@@ -962,13 +962,83 @@ TextureCache::PairMVD TextureCache::hackLoadMVDFromFile(const std::string& fileN
     if (idxR == -1 || idxG == -1 || idxB == -1)
         log::error("%s: requires encoded MV in RG channels and Depth in B channel", fileName.c_str());
 
-    // Get channel pointers; tinyexr use uint16_t = unsigned short for FP16
-    uint16_t* r = idxR != -1 ? reinterpret_cast<uint16_t*>(image.images[idxR]) : nullptr;
-    uint16_t* g = idxG != -1 ? reinterpret_cast<uint16_t*>(image.images[idxG]) : nullptr;
-    uint16_t* b = idxB != -1 ? reinterpret_cast<uint16_t*>(image.images[idxB]) : nullptr;
-    assert(r != nullptr && g != nullptr && b != nullptr,
-        L"EXR file %ls has null channel pointers when converting to uint16_t: r = %p, g = %p, b = %p",
-        fileName.c_str(), r, g, b);
+    // NEW: Check if the image is tiled
+    const size_t inputPixelCount = static_cast<size_t>(image.width) * static_cast<size_t>(image.height);
+    bool         isTiled = (header.tiled != 0);
+
+    /// Get inputPixelCount-sized channel pointers; tinyexr use uint16_t = unsigned short for FP16
+    uint16_t* r = nullptr;
+    uint16_t* g = nullptr;
+    uint16_t* b = nullptr;
+    std::vector<uint16_t> r_buf, g_buf, b_buf;
+    if (isTiled) {
+        // Handle tiled EXR - reconstruct image from tiles
+        //log::info("Loading tiled MVD exr: %dx%d with %d tiles", image.width, image.height, image.num_tiles);
+
+        // Allocate buffers for reconstructed image
+        r_buf.resize(inputPixelCount, 0);
+        g_buf.resize(inputPixelCount, 0);
+        b_buf.resize(inputPixelCount, 0);
+
+        // Get tile channel data then copy to per-channel planar data.
+        for (int tile_idx = 0; tile_idx < image.num_tiles; tile_idx++)
+        {
+            const EXRTile& tile = image.tiles[tile_idx];
+
+            uint16_t* tile_r = idxR != -1 ? reinterpret_cast<uint16_t*>(tile.images[idxR]) : nullptr;
+            uint16_t* tile_g = idxG != -1 ? reinterpret_cast<uint16_t*>(tile.images[idxG]) : nullptr;
+            uint16_t* tile_b = idxB != -1 ? reinterpret_cast<uint16_t*>(tile.images[idxB]) : nullptr;
+            if (tile_r == nullptr || tile_g == nullptr || tile_b == nullptr) {
+                log::error("Tiled EXR file %ls has null channel pointers when converting to uint16_t: r = %p, g = %p, b = %p",
+                    fileName.c_str(),
+                    tile_r,
+                    tile_g,
+					tile_b);
+            }
+
+            /// This works like GPU thread id.
+            /// First we locate the starting index of the tile (like thread block) from offset_x and offset_y (like tb.id)
+            /// Next we copy this width x height tile.
+            /// Also note that tile.width and tile.height represent effective data-window size.
+            /// E.g. 100 x 100 for the corner cell (last one), while it still malloc a same 128x128 memory.
+            size_t start_y = tile.offset_y * header.tile_size_y;
+            size_t start_x = tile.offset_x * header.tile_size_x;
+            for (size_t y = 0; y < tile.height; y++)
+            {
+                for (size_t x = 0; x < tile.width; x++)
+                {
+                    // index current pixel in tile: use tile_size_x instead of width, see above.
+                    size_t tid = y * header.tile_size_x + x;
+                    // index current pixel in global image-size memory
+                    size_t gid = (start_y + y) * image.width + (start_x + x);
+                    r_buf[gid] = tile_r[tid];
+                    g_buf[gid] = tile_g[tid];
+                    b_buf[gid] = tile_b[tid];
+                }
+            }
+        }
+
+        // DEBUG CHECK: non-negative RGB fp16 maintains order after cast as uint16_t
+        auto checkMinMax = [](std::vector<uint16_t> vec) -> std::pair<float, float> {
+            auto          minmax = std::minmax_element(vec.begin(), vec.end());
+            tinyexr::FP16 fmin{ *minmax.first }, fmax{ *minmax.second };
+            return std::make_pair(tinyexr::half_to_float(fmin).f, tinyexr::half_to_float(fmax).f);
+            };
+        //auto rMinMax = checkMinMax(r_buf);
+        //auto gMinMax = checkMinMax(g_buf);
+        //auto bMinMax = checkMinMax(b_buf);
+
+        // Set pointers to the reconstructed buffers
+        r = r_buf.data();
+        g = g_buf.data();
+        b = b_buf.data();
+    }
+    else {
+        // Typical scanline mode
+        r = idxR != -1 ? reinterpret_cast<uint16_t*>(image.images[idxR]) : nullptr;
+        g = idxG != -1 ? reinterpret_cast<uint16_t*>(image.images[idxG]) : nullptr;
+        b = idxB != -1 ? reinterpret_cast<uint16_t*>(image.images[idxB]) : nullptr;
+    }
 
     const size_t imgWidth = static_cast<size_t>(image.width);
     const size_t imgHeight = static_cast<size_t>(image.height);

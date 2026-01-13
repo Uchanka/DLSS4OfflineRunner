@@ -15,14 +15,14 @@ This doc contains both important usage guide and optional technical details. Her
 
 1. Ensure you have CMake 3.20+ and the vulkan sdk (run `vulkaninfo`) on your system.
 2. Ensure that a VK-compatible dxc.exe is available in your system `PATH`.  The best way to do this is to install a recent (1.2.198.1 or newer) Vulkan SDK from [official site](https://vulkan.lunarg.com/sdk/home#windows) and ensure that its `bin` directory is in the build machine's system `PATH`.
-3. Clone this repository, then run: `git submodule update --init --recursive`
+3. Clone this repository (you probably have done so), then run: `git submodule update --init --recursive`
 4. Go to Streamline repo and download the [SDK Release](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.9.0). Unzip the folder and put everything into `streamline/` folder in project root. i.e. `streamline/package.bat` should exist.
 5. Switch to **dlss-release** branch.
 6. Run `make.bat` and fix any error in the CMake configure.
 7. Open the solution in `_build/`.
 8. ~~Install Windows Implementation Library (wil). See section below for how to.~~ UPDATE: it has been added as a git submodule and will be immediately usable.
 9. Build Solution.
-10. Make sure you read and follow [this section](#cmdline-args) before starting any serious/actual run.
+10. Make sure you read and follow [Cmdline Args section](#cmdline-args) before starting any serious/actual run.
 
 ## Cmdline Args
 
@@ -39,6 +39,7 @@ We have the following options, adapted from FSR Offline Runner README:
 - DisplayResolution: accepts 2 formats. See [this section](#resolution-system-in-dlss) for more details. TL;DR: User specifies display resolution in cmdline, render resolution is auto determined by the pre-scaled input image size, and DLSS mode is internally decided to pass check by DLSS.
   - `-DisplayResolution <width> <height>`. This is the general option and gives full flexibility. i.e. Except for extreme resolutions like 10x7, 19200x10800, users can choose any value, like 2880x1620. ***BUT NOTE: The aspect ratio should be consistent with that of input image data.***
   - `-DisplayResolution <alias>`, where `<alias>` accepts valid values 1, 2, and 4. This is a handy alternative for the common 1K, 2K, and 4K settings.
+  - [***FUTURE TODO***] Unfortunately, for now precise FG export can only be seen in 1K, 2K, and 4K display resolution under fullscreen mode. I will remove this bullet after fully enabling custom resolution support.
 - [Optional] ParseJitter: whether to parse and use the jitter data from input filenames, default false. Ensure filenames have it before setting it to true. (Hint: currently only NPP_JI files have it.)
 - BatchIndex: each batch is 15 frames captured. For example, a 60-frame scene requires 4 runs with BatchIndex from 0 to 3. See [this section](#bypass-dlfg-frame-rate-check) for more details.
 - HackPaths: accepts 2 formats.
@@ -159,11 +160,9 @@ This offline runner has been tested on the following 2 machines:
 - (MT Arch Lab Machine) i5-12400, 6 cores 12 threads 2.50-4.00 GHz; RTX 5080; 4K 60Hz monitor.
 - (My game PC) AMD R9-9950X3D, 16 cores 32 threads 4.3-5.7 GHz; RTX 5090; 4K 240Hz.
 
-Hardware-dependent issues have occurred and may occur in the future on different machines.
+Hardware-dependent and resolution-dependent issues have occurred and may occur in the future on different machines.
 
-For now, a possible issue is: out of the 60 exported FG outputs, there could be 1 or 2 files holding rendered frames instead of FG frames. And this issue happens unpredicatably across different runs, i.e. it's incorrect on random 1 or 2 frames. It only ever happened on 5080 Lab Machine. My personal guess is the very different monitor refresh rate (240 vs 60) is the cause, as frame gets displayed and can be captured "more on time" with higher refresh rate.
-
-TODO: update this section after this issue is fixed.
+For example, a found-and-fixed issue is: out of the 60 exported FG outputs, there could ***randomly*** be 1 or 2 files holding rendered frames instead of FG frames.
 
 If any issue occurs, including the above one, and is untolerable, please contact me (<haoxuan.wang@mthreads.com>)
 
@@ -213,7 +212,9 @@ Fortunately, frame rate can only be measured after some frames have been present
 
 A cmdline option `BatchIndex` has been added to support the "multi-run batch captures" approach. **NOTE: When running with VS Debugger, users should know the total number of input frames and pass in the correct 0-indexed `BatchIndex`.** Fortunately, this easy counting + index computing can be automated by a script, which is the typical use case.
 
-We have provided a helpful script [run_OneScene.bat](run_OneScene.bat) which completes all batch runs of a scene. It is recommended to use in production case. The other script [run_MultiTimes.bat](run_MultiTimes.bat) simply repeats that several times. And it should be used only for confirming correctness on certain machines, not for production.
+This helpful script [run_OneScene.bat](run_OneScene.bat) completes all batch runs of a scene. It's the go-to choice in production case.
+
+The other script [run_MultiTimes.bat](run_MultiTimes.bat) simply repeats that several times. And it should be used only for confirming correctness on certain machines, not for production. Well, if you intend to run multiple scenes (multiple sets of input data) and thus need a multi-scene master script (which we didn't provide), then this run_MultiTimes.bat should be a good reference.
 
 The script itself accepts input image paths from cmdline. i.e. For example, you can use
 
@@ -221,6 +222,21 @@ The script itself accepts input image paths from cmdline. i.e. For example, you 
 .\run_OneScene.bat ".\media\TEST_SCENE\NPP_JI" "..\media\TEST_SCENE\outputs"
 ```
 
-In this way, users can use a master script (we didn't provide it) to call the per-scene script on different test scenes. Our script does NOT support other app cmdline options except for `HackPaths`. To change other options, please change the script or VS Debugging property page.
+Also note that if you don't copy the reference images in **NPP_GT** to `OutputPath` (to leverage the `AlignFilename` feature, default on in the script), you may want to change these 2 lines in the script.
 
-Low-level edge-case details like incomplete batch (batch 5 should capture frame 75 to 79 in the example) and head/tail frame correctness (yes, we will read some "safety frames" in addition to ensure they are computed with their neighbor frames) are handled and users don't need to worry about them.
+```bat
+rem set AlignFilename=
+set AlignFilename=-AlignFilename
+
+rem set "Has_Ref=" if you DON'T want to copy references in NPP_GT to OUTPUT_ROOT (for comparison)
+set "Has_Ref=y"
+```
+
+Our script does NOT support other app cmdline options except for `HackPaths` and `OutputPath`. To change other options, please change the script or VS Debugging property page.
+
+Final words: low-level edge-case details like
+
+- scene with frame count NOT a multiple of 15 (frames per batch)
+- head/tail frame correctness (mostly to ensure a correct frame history when DLSS starts to compute output)
+
+are handled and users don't need to worry about them.

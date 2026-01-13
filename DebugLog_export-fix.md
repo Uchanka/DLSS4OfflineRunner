@@ -21,7 +21,7 @@ Conclusion: The 0th SR export wrongly stores FG frame data of its front neighbor
 
 Instead of calling CaptureFramePoolHDR(), which is a front-end approach, on both SR and FG, we map SR frame data directly from RenderTarget AAResolvedColor. See `MapRenderTargetDataHDR()`.
 
-## Bug 2: Inconsistent Color Statistics
+## Bug 2: Inconsistent Color Statistics (CAN'T RESOLVE)
 
 Found on 5090 Machine, probably also exists on 5080 Machine.
 
@@ -44,9 +44,7 @@ This is confirmed by [Nvidia ProgrammingGuideDLSS_G doc](streamline\docs\Program
 > **IMPORTANT:**
 > DLSS-G currently does NOT support FP16 pixel format and scRGB color space because it is too expensive in terms of compute and bandwidth cost.
 
-TODO: dive deeper and see if we can turn on DLSSG with RGBA16_FLOAT.
-
-## Bug 3: Memory Leak
+## Bug 3: Memory Fragmentation (TO COMPLETE)
 
 Found on 500 Machine only
 
@@ -70,3 +68,36 @@ NPP_beauty_2484_MaxPerformance.exr
 
 NPP_beauty_2501_MaxPerformance.exr
 NPP_beauty_2501_MaxPerformance_fg.exr
+
+## Bug 4: Fragile Fullscreen Mode (SCRATCH PAPER FOR NOW)
+
+3844 x 2177 3840 x 2160; 4 x 17
+2562 x 1453 2560 x 1440; 2 x 13
+
+### Failed Attempt
+
+```cpp
+void StreamlineSample::ComputeWindowBorders(HWND hWnd)
+{
+    WindowBorderInfo& borders = windowBorderInfo;
+
+    RECT windowRect, clientRect;
+    GetWindowRect(hWnd, &windowRect);
+    GetClientRect(hWnd, &clientRect);
+
+    POINT clientTopLeft = { 0, 0 };
+    ClientToScreen(hWnd, &clientTopLeft);
+
+    RECT clientRectScreen = {
+        clientTopLeft.x,
+        clientTopLeft.y,
+        clientTopLeft.x + (clientRect.right - clientRect.left),
+        clientTopLeft.y + (clientRect.bottom - clientRect.top)
+    };
+
+    borders.left   = static_cast<uint32_t>(clientRectScreen.left - windowRect.left);
+    borders.top    = static_cast<uint32_t>(clientRectScreen.top - windowRect.top);
+    borders.right  = static_cast<uint32_t>(windowRect.right - clientRectScreen.right);
+    borders.bottom = static_cast<uint32_t>(windowRect.bottom - clientRectScreen.bottom);
+}
+```
