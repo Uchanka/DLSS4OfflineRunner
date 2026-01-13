@@ -1842,7 +1842,7 @@ namespace donut::engine
             header.requested_pixel_types[i] = TINYEXR_PIXELTYPE_HALF;
         }
 
-        header.compression_type = TINYEXR_COMPRESSIONTYPE_NONE;
+        header.compression_type = TINYEXR_COMPRESSIONTYPE_ZIP;
 
         // Configure EXR image
         exrImage.num_channels = header.num_channels;
